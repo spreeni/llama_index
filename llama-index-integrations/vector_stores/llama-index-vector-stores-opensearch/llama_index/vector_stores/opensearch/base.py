@@ -89,6 +89,7 @@ class OpensearchVectorClient:
         self._endpoint = endpoint
         self._dim = dim
         self._index = index
+        self._engine = engine
         self._text_field = text_field
         self._max_chunk_bytes = max_chunk_bytes
 
@@ -330,14 +331,25 @@ class OpensearchVectorClient:
                 query_embedding, k, vector_field=embedding_field
             )
         else:
-            # https://opensearch.org/docs/latest/search-plugins/knn/painless-functions/
-            search_query = self._default_painless_scripting_query(
-                query_embedding,
-                k,
-                space_type="l2Squared",
-                pre_filter={"bool": {"filter": pre_filter}},
-                vector_field=embedding_field,
-            )
+            # Use efficient search with Lucene or FAISS which performs ANN,
+            # or a post-filtering script which does exact KNN on the results
+            # https://opensearch.org/docs/latest/search-plugins/knn/filter-search-knn/
+            if self._engine in ["lucene", "faiss"]:
+                search_query = self._efficient_filtering_query(
+                    query_embedding,
+                    k,
+                    filters=pre_filter,
+                    vector_field=embedding_field,
+                )
+            else:
+                # https://opensearch.org/docs/latest/search-plugins/knn/painless-functions/
+                search_query = self._default_painless_scripting_query(
+                    query_embedding,
+                    k,
+                    space_type="l2Squared",
+                    pre_filter={"bool": {"filter": pre_filter}},
+                    vector_field=embedding_field,
+                )
 
         return search_query
 
@@ -420,6 +432,29 @@ class OpensearchVectorClient:
                 }
             },
         }
+
+    def _efficient_filtering_query(
+        self,
+        query_vector: List[float],
+        k: int = 4,
+        filters: Optional[Union[Dict, List]] = None,
+        vector_field: str = "embedding",
+    ):
+        """For Efficient Filtering, this is the default query."""
+        search_query = {
+            "size": k,
+            "query": {
+                "knn": {
+                    vector_field: {
+                        "vector": query_vector,
+                        "k": k,
+                    }
+                }
+            },
+        }
+        if filters:
+            search_query["query"]["knn"][vector_field]["filter"] = filters
+        return search_query
 
     def _is_aoss_enabled(self, http_auth: Any) -> bool:
         """Check if the service is http_auth is set as `aoss`."""

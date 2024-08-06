@@ -1,5 +1,9 @@
 # CHANGELOG — llama-index-vector-stores-opensearch
 
+## [0.1.15]
+
+- Use efficient search with Lucene or FAISS, if filters are given
+
 ## [0.1.14]
 
 - Adds support for full MetadataFilters (all operators and nested filters)

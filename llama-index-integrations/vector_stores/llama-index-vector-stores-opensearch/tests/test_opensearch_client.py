@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import numpy as np
 import pytest
 import time
 import uuid
@@ -72,6 +73,7 @@ def index_name() -> str:
 @pytest.fixture()
 def os_store(index_name: str) -> Generator[OpensearchVectorStore, None, None]:
     client = OpensearchVectorClient(
+        # engine="lucene",
         endpoint="localhost:9200",
         index=index_name,
         dim=3,
@@ -664,3 +666,36 @@ def test_filter_nested(
 
     doc_ids = {node.id_ for node in query_result.nodes}
     assert doc_ids == exp_match_ids
+
+
+@pytest.mark.parametrize("n_docs", [100, 1_000, 10_000])
+def test_performance_filter_search(
+    os_store: OpensearchVectorStore,
+    insert_document,
+    n_docs: int,
+):
+    """Test OpensearchVectorStore filter search performance."""
+    nodes = []
+    for i in range(n_docs):
+        embedding = np.random.randn(TEST_EMBED_DIM)
+        nodes.append(
+            TextNode(
+                id_=f"doc{i}", text="aaa", metadata={"page": 42}, embedding=embedding
+            )
+        )
+        nodes.append(TextNode(id_=f"other_doc{i}", text="bbb", embedding=embedding))
+    os_store.add(nodes=nodes)
+
+    query = VectorStoreQuery(
+        query_embedding=[0.1] * TEST_EMBED_DIM,
+        similarity_top_k=10,
+        filters=MetadataFilters(filters=[MetadataFilter(key="page", value=42)]),
+    )
+    start = time.time()
+    query_result = os_store.query(query)
+    time_elapsed = time.time() - start
+    assert len(query_result.nodes) == 10
+    for node in query_result.nodes:
+        assert node.node.metadata.get("page") == 42
+
+    assert time_elapsed < 1
